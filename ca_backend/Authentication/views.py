@@ -30,6 +30,14 @@ from .send_email import send_approved_email, send_email_cnf_email, send_email_ve
 import bcrypt  
 from rest_framework_simplejwt.views import TokenObtainPairView
 from django.contrib.auth import password_validation
+from django.db.models import Q
+
+from decouple import config
+import smtplib
+
+connection = smtplib.SMTP("smtp.gmail.com", port=587)
+connection.starttls()
+connection.login(user=config("EMAIL_HOST_USER"), password=config("EMAIL_HOST_PASSWORD"))
 
 
 # Create your views here.
@@ -86,7 +94,7 @@ class RegisterView(generics.GenericAPIView):
             referral_code = ReferralCode(user=user, referral_code=f"tnx24_{user.username}")
             referral_code.save()
             # send email to the user containing a link to verify their email
-            send_email_verif_email(user.email, email_token)
+            send_email_verif_email(user.email, email_token,  user.username, connection)
             return Response(
                 {"success": "Verification link has been sent by email!"},
                 status=status.HTTP_200_OK,
@@ -108,21 +116,18 @@ class CustomTokenObtainPairView(TokenObtainPairView):
         password = request.data.get("password")
 
         try:
-            user = UserAccount.objects.get(username=username)
+            user = UserAccount.objects.get(Q(username=username) | Q(email=username))
         except UserAccount.DoesNotExist:
-            try:
-                user = UserAccount.objects.get(email=username)
-            except UserAccount.DoesNotExist:
-                return Response(
-                    {"error": "User does not exist."}, status=status.HTTP_400_BAD_REQUEST
-                )
+            return Response(
+                {"error": "User does not exist."}, status=status.HTTP_400_BAD_REQUEST
+            )
         
         if user.status == "P":
             return Response(
                 {"error": "User not verified by admin yet."}, status=status.HTTP_400_BAD_REQUEST
             )
         
-        if user.email_verified == False:
+        if not user.email_verified:
             return Response(
                 {"error": "Email not verified! First verify email."}, status=status.HTTP_400_BAD_REQUEST
             )
@@ -183,14 +188,15 @@ class VerifyAccountView(views.APIView):
             400: """{"error": "Bad Request"}""",
         }
     )
-    def get(self,request):
+    def get(self, request):
         try:
-            vm_obs = VerificationModel.objects.all()
+            vm_obs = VerificationModel.objects.select_related("userid").all()
             profiles = UserProfile.objects.filter(user__in=[vm_ob.userid for vm_ob in vm_obs])
             serializer = ProfileSerializer(profiles, many=True)
             tokens=[vm_ob.email_token for vm_ob in vm_obs]
             for i,token in enumerate(tokens):
                 serializer.data[i]["email_token"]=token
+                serializer.data[i]['is_verified'] = (vm_obs[i].userid.status == "V")
             return Response(serializer.data, status=status.HTTP_200_OK)
         except Exception as e:
             return Response(
@@ -228,7 +234,7 @@ class VerifyAccountView(views.APIView):
             user.status = "V"
             verif_row.delete()
             user.save()
-            send_approved_email(user.email)
+            send_approved_email(user.email, user.username, connection)
             return Response(
                 {"success": "User verified successfully!"},
                 status=status.HTTP_200_OK,
@@ -270,7 +276,7 @@ class VerifyEmailView(views.APIView):
         user.save()
         # send_approved_email(user.email)
         # send email informing the user that email has been verified and account will shortly be activated after a review by our team
-        send_email_cnf_email(user.email)
+        send_email_cnf_email(user.email, user.username, connection)
         print("returning success resp")
         return HttpResponseRedirect(redirect_to=config("FRONTEND_URL")+"/login")
 
@@ -302,7 +308,7 @@ class ForgotPasswordOTPCreationView(generics.GenericAPIView):
                 user_otp.save()
             else:
                 ForgotPasswordOTPModel.objects.create(user=user, otp=otp)
-            send_otp_email(user.email, otp)
+            send_otp_email(user.email, otp, user.username, connection)
             return Response(
                 {"detail": "OTP generated successfully"}, status=status.HTTP_201_CREATED
             )
