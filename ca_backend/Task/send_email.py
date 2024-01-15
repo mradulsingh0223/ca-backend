@@ -1,16 +1,16 @@
 import smtplib 
+import os
 from decouple import config
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-import os
 
 try:
     SUPPORT_EMAIL = config("SUPPORT_EMAIL")
 except:
     SUPPORT_EMAIL = "tech@technex.in"
 
-LOGO_FILE_PATH = "./ca_backend/logo/asset.png"
+LOGO_FILE_PATH = os.path.abspath("./ca_backend/logo/asset.png")
 
 with open(LOGO_FILE_PATH, 'rb') as fp:
     IMAGE = MIMEImage(fp.read())
